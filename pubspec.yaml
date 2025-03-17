@@ -1,7 +1,8 @@
 name: secure_web_lock
 description: A Flutter package for implementing secure auto-locking for web applications to prevent unauthorized access during periods of inactivity.
 version: 0.1.0
-homepage: https://github.com/yourusername/secure_web_lock
+homepage: https://github.com/ami231/secure_web_lock
+repository: https://github.com/ami231/secure_web_lock
 
 environment:
   sdk: '>=2.18.0 <4.0.0'
@@ -23,3 +24,5 @@ dev_dependencies:
 flutter:
   assets:
     - lib/web/secure_web_lock.js
+
+license: MIT

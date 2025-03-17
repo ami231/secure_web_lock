@@ -10,7 +10,7 @@ A Flutter package that implements session lock functionality for web application
 - 🚫 Exclude specific routes from being locked (e.g., login screens)
 - 🎨 Customizable lock screen UI
 - 💾 Persists settings across sessions
-- 🌐 Works with any state management solution (no dependencies on Riverpod)
+- 🌐 Works with any state management solution
 
 ## Installation
 
