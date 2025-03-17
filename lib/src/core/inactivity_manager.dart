@@ -1,17 +1,17 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
-import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../utils/js_interop.dart';
-import 'lock_screen_settings_provider.dart';
+import '../../utils/js_interop.dart';
 
-part 'inactivity_provider.g.dart';
-
-/// State for the inactivity provider
+/// State for the inactivity manager
 class InactivityState {
   /// Whether the app is currently locked
   final bool isLocked;
+
+  /// Whether the lock screen is enabled
+  final bool isEnabled;
 
   /// When the last activity was detected
   final DateTime lastActivityTime;
@@ -19,34 +19,65 @@ class InactivityState {
   /// Constructor
   InactivityState({
     required this.isLocked,
+    required this.isEnabled,
     required this.lastActivityTime,
   });
 
   /// Create a copy with some fields replaced
   InactivityState copyWith({
     bool? isLocked,
+    bool? isEnabled,
     DateTime? lastActivityTime,
   }) {
     return InactivityState(
       isLocked: isLocked ?? this.isLocked,
+      isEnabled: isEnabled ?? this.isEnabled,
       lastActivityTime: lastActivityTime ?? this.lastActivityTime,
     );
   }
 }
 
-/// Provider for inactivity state
-@Riverpod(keepAlive: true)
-class InactivityNotifier extends _$InactivityNotifier {
+/// Manager for inactivity state
+class InactivityManager {
+  // Singleton instance
+  static final InactivityManager _instance = InactivityManager._internal();
+
+  // Factory constructor to return the singleton instance
+  factory InactivityManager() => _instance;
+
+  // Private constructor
+  InactivityManager._internal();
+
+  // State
+  InactivityState _state = InactivityState(
+    isLocked: false,
+    isEnabled: true,
+    lastActivityTime: DateTime.now(),
+  );
+
+  // Stream controller for state changes
+  final _stateController = StreamController<InactivityState>.broadcast();
+
+  // Getters
+  Stream<InactivityState> get stateStream => _stateController.stream;
+  InactivityState get currentState => _state;
+  bool get isLocked => _state.isLocked;
+  bool get isEnabled => _state.isEnabled;
+
+  // Timer
   Timer? _inactivityTimer;
   Duration _timeout = const Duration(seconds: 10);
+
+  // Callbacks
   VoidCallback? _onLock;
   VoidCallback? _onUnlock;
   VoidCallback? _onLockEscape;
 
-  /// Key for storing last activity time
+  // Storage keys
   static const String _lastActivityTimeKey = 'secure_web_lock_last_active_time';
+  static const String _enabledKey = 'secure_web_lock_enabled';
 
-  /// Initialize with custom timeout and callbacks
+  /// Initialize the manager
   void initialize({
     Duration? timeout,
     VoidCallback? onLock,
@@ -58,6 +89,9 @@ class InactivityNotifier extends _$InactivityNotifier {
     _onUnlock = onUnlock;
     _onLockEscape = onLockEscape;
 
+    // Load settings from storage
+    _loadSettings();
+
     // Set up JS interop if on web
     if (kIsWeb) {
       JsInterop.initializeJavaScript();
@@ -66,59 +100,50 @@ class InactivityNotifier extends _$InactivityNotifier {
       });
     }
 
-    _startInactivityTimer();
+    // Start timer if enabled
+    if (_state.isEnabled) {
+      _startInactivityTimer();
+    }
   }
 
-  @override
-  InactivityState build() {
-    ref.onDispose(() {
-      _inactivityTimer?.cancel();
-    });
+  /// Load settings from storage
+  Future<void> _loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final isEnabled =
+          prefs.getBool(_enabledKey) ?? true; // Default to enabled
 
-    // Listen for changes in lock screen settings
-    ref.listen(lockScreenSettingsProvider, (previous, current) {
-      if (previous == false && current == true) {
-        debugPrint(
-            "Secure Web Lock: Lock screen enabled, starting inactivity timer");
-        _startInactivityTimer();
-      }
+      _state = _state.copyWith(isEnabled: isEnabled);
+      _notifyStateChange();
 
-      if (previous == true && current == false) {
-        debugPrint(
-            "Secure Web Lock: Lock screen disabled, canceling inactivity timer");
-        _inactivityTimer?.cancel();
-
-        // If currently locked, unlock
-        if (state.isLocked) {
-          debugPrint(
-              "Secure Web Lock: Unlocking app due to lock screen setting change");
-          unlock();
-        }
-      }
-    });
-
-    // Only start timer if lock screen is enabled
-    final lockScreenEnabled = ref.read(lockScreenSettingsProvider);
-    if (lockScreenEnabled) {
-      _startInactivityTimer();
-    } else {
-      debugPrint(
-          "Secure Web Lock: Lock screen disabled, not starting inactivity timer");
+      debugPrint('Secure Web Lock: Lock screen settings loaded: $isEnabled');
+    } catch (e) {
+      debugPrint('Secure Web Lock: Error loading settings: $e');
     }
+  }
 
-    return InactivityState(
-      isLocked: false,
-      lastActivityTime: DateTime.now(),
-    );
+  /// Save settings to storage
+  Future<void> _saveSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_enabledKey, _state.isEnabled);
+      debugPrint(
+          'Secure Web Lock: Lock screen settings saved: ${_state.isEnabled}');
+    } catch (e) {
+      debugPrint('Secure Web Lock: Error saving settings: $e');
+    }
+  }
+
+  /// Notify listeners of state change
+  void _notifyStateChange() {
+    _stateController.add(_state);
   }
 
   /// Handle lock escape attempts
   void _handleLockEscape() {
     debugPrint("Secure Web Lock: Lock escape attempt detected");
-    // Call the escape callback if provided
     _onLockEscape?.call();
   }
-
 
   /// Start or restart the inactivity timer
   void _startInactivityTimer() {
@@ -128,16 +153,13 @@ class InactivityNotifier extends _$InactivityNotifier {
 
   /// Register user activity
   void registerActivity() {
-    // Check if lock screen is enabled in settings
-    final lockScreenEnabled = ref.read(lockScreenSettingsProvider);
-
     // If lock screen is disabled or already locked, don't register activity
-    if (!lockScreenEnabled || state.isLocked) {
+    if (!_state.isEnabled || _state.isLocked) {
       return;
     }
 
     debugPrint("Secure Web Lock: Registering activity");
-    state = state.copyWith(lastActivityTime: DateTime.now());
+    _state = _state.copyWith(lastActivityTime: DateTime.now());
     _saveLastActiveTime();
     _startInactivityTimer();
   }
@@ -157,11 +179,8 @@ class InactivityNotifier extends _$InactivityNotifier {
 
   /// Check inactivity when app resumes
   Future<void> checkInactivityOnResume() async {
-    // Check if lock screen is enabled in settings
-    final lockScreenEnabled = ref.read(lockScreenSettingsProvider);
-
     // If lock screen is disabled, don't check inactivity
-    if (!lockScreenEnabled) {
+    if (!_state.isEnabled) {
       debugPrint(
           "Secure Web Lock: Lock screen is disabled, skipping inactivity check");
       return;
@@ -185,18 +204,16 @@ class InactivityNotifier extends _$InactivityNotifier {
 
   /// Lock the app
   void lockApp() {
-    // Check if lock screen is enabled in settings
-    final lockScreenEnabled = ref.read(lockScreenSettingsProvider);
-
     // If lock screen is disabled, don't lock the app
-    if (!lockScreenEnabled) {
+    if (!_state.isEnabled) {
       debugPrint("Secure Web Lock: Lock screen is disabled, skipping app lock");
       return;
     }
 
     debugPrint("Secure Web Lock: Locking app");
-    if (!state.isLocked) {
-      state = state.copyWith(isLocked: true);
+    if (!_state.isLocked) {
+      _state = _state.copyWith(isLocked: true);
+      _notifyStateChange();
 
       // Set the lock state in JavaScript
       if (kIsWeb) {
@@ -211,10 +228,11 @@ class InactivityNotifier extends _$InactivityNotifier {
   /// Unlock the app
   void unlock() {
     debugPrint("Secure Web Lock: Unlocking app");
-    state = state.copyWith(
+    _state = _state.copyWith(
       isLocked: false,
       lastActivityTime: DateTime.now(),
     );
+    _notifyStateChange();
 
     // Set the lock state in JavaScript
     if (kIsWeb) {
@@ -227,10 +245,42 @@ class InactivityNotifier extends _$InactivityNotifier {
     _startInactivityTimer();
   }
 
+  /// Enable or disable the lock screen
+  Future<void> setEnabled(bool enabled) async {
+    if (_state.isEnabled != enabled) {
+      _state = _state.copyWith(isEnabled: enabled);
+      _notifyStateChange();
+
+      await _saveSettings();
+
+      if (enabled) {
+        debugPrint(
+            "Secure Web Lock: Lock screen enabled, starting inactivity timer");
+        _startInactivityTimer();
+      } else {
+        debugPrint(
+            "Secure Web Lock: Lock screen disabled, canceling inactivity timer");
+        _inactivityTimer?.cancel();
+
+        // If currently locked, unlock
+        if (_state.isLocked) {
+          debugPrint(
+              "Secure Web Lock: Unlocking app due to lock screen setting change");
+          unlock();
+        }
+      }
+    }
+  }
+
+  /// Toggle lock screen enabled state
+  Future<void> toggle() async {
+    await setEnabled(!_state.isEnabled);
+  }
+
   /// Set the timeout duration
   void setTimeout(Duration timeout) {
     _timeout = timeout;
-    if (ref.read(lockScreenSettingsProvider) && !state.isLocked) {
+    if (_state.isEnabled && !_state.isLocked) {
       _startInactivityTimer();
     }
   }
@@ -238,5 +288,11 @@ class InactivityNotifier extends _$InactivityNotifier {
   /// Get the current timeout duration
   Duration getTimeout() {
     return _timeout;
+  }
+
+  /// Dispose resources
+  void dispose() {
+    _inactivityTimer?.cancel();
+    _stateController.close();
   }
 }

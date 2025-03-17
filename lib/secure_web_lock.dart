@@ -1,27 +1,23 @@
 library secure_web_lock;
 
 import 'package:flutter/foundation.dart';
-// Export a helper class to make implementation easier
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'providers/inactivity_provider.dart';
-import 'providers/lock_screen_settings_provider.dart';
+import 'src/core/inactivity_manager.dart';
 import 'src/router/router_observer.dart';
 import 'utils/js_interop.dart';
 
-export 'providers/inactivity_provider.dart';
-export 'providers/lock_screen_settings_provider.dart';
-export 'src/router/router_observer.dart';
 // Export core functionality
+export 'src/core/inactivity_manager.dart' show InactivityState;
 export 'src/widgets/activity_observer.dart';
 export 'src/widgets/lock_screen.dart';
 export 'utils/js_interop.dart';
 
-// Core functionality
-
 /// Helper class for easy implementation of SecureWebLock
 class SecureWebLock {
+  /// Get the singleton instance of InactivityManager
+  static final InactivityManager _manager = InactivityManager();
+
   /// Initialize the secure web lock functionality
   ///
   /// This should be called as early as possible in your app,
@@ -32,37 +28,32 @@ class SecureWebLock {
     }
   }
 
-  /// Initialize the inactivity notifier with custom settings
+  /// Initialize the inactivity manager with custom settings
   ///
-  /// This should be called after your ProviderScope is set up
-  static void initializeProvider(
-    WidgetRef ref, {
+  /// This should be called early in your app's lifecycle
+  static void initializeManager({
     Duration? timeout,
     VoidCallback? onLock,
     VoidCallback? onUnlock,
-    VoidCallback? onLockEscape, // Add new parameter
+    VoidCallback? onLockEscape,
   }) {
-    ref.read(inactivityNotifierProvider.notifier).initialize(
-          timeout: timeout,
-          onLock: onLock,
-          onUnlock: onUnlock,
-          onLockEscape: onLockEscape,
-        );
+    _manager.initialize(
+      timeout: timeout,
+      onLock: onLock,
+      onUnlock: onUnlock,
+      onLockEscape: onLockEscape,
+    );
   }
 
-  /// Create a GoRouter observer for activity tracking
+  /// Create a navigator observer for activity tracking
   ///
   /// Usage:
   /// ```dart
-  /// final router = GoRouter(
-  ///   observers: [
-  ///     SecureWebLock.createRouterObserver(ref),
-  ///   ],
-  ///   // ...other router config
-  /// );
+  /// final navigatorObservers = [
+  ///   SecureWebLock.createRouterObserver(),
+  /// ];
   /// ```
-  static NavigatorObserver createRouterObserver(
-    WidgetRef ref, {
+  static NavigatorObserver createRouterObserver({
     List<String> excludedRoutePatterns = const [
       '/login',
       '/register',
@@ -71,54 +62,60 @@ class SecureWebLock {
     bool Function(BuildContext? context)? isExcludedRouteCallback,
   }) {
     return SecureWebLockRouterObserver(
-      ref: ref,
       excludedRoutePatterns: excludedRoutePatterns,
       isExcludedRouteCallback: isExcludedRouteCallback,
     );
   }
 
+  /// Get a stream of inactivity state changes
+  static Stream<InactivityState> get stateStream => _manager.stateStream;
+
+  /// Get the current inactivity state
+  static InactivityState get currentState => _manager.currentState;
+
   /// Enable or disable the lock screen
-  static void setEnabled(WidgetRef ref, bool enabled) {
-    ref.read(lockScreenSettingsProvider.notifier).setEnabled(enabled);
+  static Future<void> setEnabled(bool enabled) async {
+    await _manager.setEnabled(enabled);
   }
 
   /// Toggle lock screen enabled/disabled state
-  static void toggle(WidgetRef ref) {
-    ref.read(lockScreenSettingsProvider.notifier).toggle();
+  static Future<void> toggle() async {
+    await _manager.toggle();
   }
 
   /// Check if lock screen is enabled
-  static bool isEnabled(WidgetRef ref) {
-    return ref.read(lockScreenSettingsProvider);
-  }
+  static bool get isEnabled => _manager.isEnabled;
 
   /// Manually lock the app
-  static void lock(WidgetRef ref) {
-    ref.read(inactivityNotifierProvider.notifier).lockApp();
+  static void lock() {
+    _manager.lockApp();
   }
 
   /// Manually unlock the app
-  static void unlock(WidgetRef ref) {
-    ref.read(inactivityNotifierProvider.notifier).unlock();
+  static void unlock() {
+    _manager.unlock();
   }
 
   /// Check if the app is currently locked
-  static bool isLocked(WidgetRef ref) {
-    return ref.read(inactivityNotifierProvider).isLocked;
-  }
+  static bool get isLocked => _manager.isLocked;
 
   /// Set the timeout duration
-  static void setTimeout(WidgetRef ref, Duration timeout) {
-    ref.read(inactivityNotifierProvider.notifier).setTimeout(timeout);
+  static void setTimeout(Duration timeout) {
+    _manager.setTimeout(timeout);
   }
 
   /// Get the current timeout duration
-  static Duration getTimeout(WidgetRef ref) {
-    return ref.read(inactivityNotifierProvider.notifier).getTimeout();
+  static Duration getTimeout() {
+    return _manager.getTimeout();
   }
 
   /// Register activity manually
-  static void registerActivity(WidgetRef ref) {
-    ref.read(inactivityNotifierProvider.notifier).registerActivity();
+  static void registerActivity() {
+    _manager.registerActivity();
+  }
+
+  /// Check inactivity when app resumes
+  static Future<void> checkInactivityOnResume() async {
+    await _manager.checkInactivityOnResume();
   }
 }

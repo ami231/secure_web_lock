@@ -2,13 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/inactivity_provider.dart';
+import '../core/inactivity_manager.dart';
 import 'lock_screen.dart';
 
 /// Widget that monitors user activity and shows the lock screen when needed
-class ActivityObserver extends ConsumerStatefulWidget {
+class ActivityObserver extends StatefulWidget {
   /// The child widget to wrap
   final Widget child;
 
@@ -40,13 +39,15 @@ class ActivityObserver extends ConsumerStatefulWidget {
   }) : super(key: key);
 
   @override
-  ConsumerState<ActivityObserver> createState() => _ActivityObserverState();
+  State<ActivityObserver> createState() => _ActivityObserverState();
 }
 
-class _ActivityObserverState extends ConsumerState<ActivityObserver>
+class _ActivityObserverState extends State<ActivityObserver>
     with WidgetsBindingObserver {
   bool _lockScreenVisible = false;
   Timer? _resumeDebounceTimer;
+  late StreamSubscription<InactivityState> _stateSubscription;
+  final InactivityManager _manager = InactivityManager();
 
   // Throttle activity registration
   DateTime _lastActivity = DateTime.now();
@@ -59,15 +60,24 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _stateSubscription = _manager.stateStream.listen(_handleStateChange);
     debugPrint('Secure Web Lock: ActivityObserver initialized');
   }
 
   @override
   void dispose() {
     _resumeDebounceTimer?.cancel();
+    _stateSubscription.cancel();
     _focusNode.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  // Handle state changes
+  void _handleStateChange(InactivityState state) {
+    if (state.isLocked && !_lockScreenVisible) {
+      _showLockScreenIfNeeded();
+    }
   }
 
   // Handle app lifecycle changes
@@ -84,9 +94,7 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
       _resumeDebounceTimer = Timer(const Duration(milliseconds: 300), () {
         // Only proceed if we're not on an excluded route
         if (!_isExcludedRoute()) {
-          ref
-              .read(inactivityNotifierProvider.notifier)
-              .checkInactivityOnResume();
+          _manager.checkInactivityOnResume();
         }
       });
     }
@@ -205,7 +213,7 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
     }
 
     // Check if app is locked
-    final isLocked = ref.read(inactivityNotifierProvider).isLocked;
+    final isLocked = _manager.isLocked;
     if (!isLocked) return;
 
     debugPrint('Secure Web Lock: App is locked, showing lock screen');
@@ -242,7 +250,7 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
                     userIdentifier,
                     () {
                       debugPrint('Secure Web Lock: Unlocking app');
-                      ref.read(inactivityNotifierProvider.notifier).unlock();
+                      _manager.unlock();
                       Navigator.of(dialogContext).pop();
                       _lockScreenVisible = false;
                     },
@@ -251,7 +259,7 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
                     userIdentifier: userIdentifier,
                     onUnlock: () {
                       debugPrint('Secure Web Lock: Unlocking app');
-                      ref.read(inactivityNotifierProvider.notifier).unlock();
+                      _manager.unlock();
                       Navigator.of(dialogContext).pop();
                       _lockScreenVisible = false;
                     },
@@ -272,16 +280,6 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
 
   @override
   Widget build(BuildContext context) {
-    // Listen for lock state changes
-    ref.listen(
-      inactivityNotifierProvider.select((state) => state.isLocked),
-      (_, isLocked) {
-        if (isLocked) {
-          _showLockScreenIfNeeded();
-        }
-      },
-    );
-
     // Create a Focus widget that captures keyboard events
     return FocusScope(
       // Make this a focus scope so it doesn't interfere with text fields
@@ -338,7 +336,7 @@ class _ActivityObserverState extends ConsumerState<ActivityObserver>
 
     // Register activity
     try {
-      ref.read(inactivityNotifierProvider.notifier).registerActivity();
+      _manager.registerActivity();
     } catch (e) {
       debugPrint('Secure Web Lock: Error registering activity: $e');
     }

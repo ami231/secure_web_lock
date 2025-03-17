@@ -10,7 +10,7 @@ A Flutter package that implements session lock functionality for web application
 - 🚫 Exclude specific routes from being locked (e.g., login screens)
 - 🎨 Customizable lock screen UI
 - 💾 Persists settings across sessions
-- 🔄 Works with Riverpod for state management
+- 🌐 Works with any state management solution (no dependencies on Riverpod)
 
 ## Installation
 
@@ -38,11 +38,7 @@ void main() {
     SecureWebLock.initialize();
   }
   
-  runApp(
-    ProviderScope(
-      child: MyApp(),
-    ),
-  );
+  runApp(MyApp());
 }
 ```
 
@@ -51,28 +47,30 @@ void main() {
 Wrap your app with the `ActivityObserver` widget:
 
 ```dart
-class MyApp extends ConsumerStatefulWidget {
+class MyApp extends StatefulWidget {
   @override
-  ConsumerState<MyApp> createState() => _MyAppState();
+  State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends ConsumerState<MyApp> {
+class _MyAppState extends State<MyApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _isLocked = false;
   
   @override
   void initState() {
     super.initState();
     
-    // Initialize the provider after the first frame
+    // Initialize the manager after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      SecureWebLock.initializeProvider(
-        ref,
+      SecureWebLock.initializeManager(
         timeout: const Duration(minutes: 5), // Lock after 5 minutes of inactivity
         onLock: () {
           print('App locked due to inactivity');
+          setState(() => _isLocked = true);
         },
         onUnlock: () {
           print('App unlocked');
+          setState(() => _isLocked = false);
         },
         onLockEscape: () {
           // Handle lock screen escape attempts
@@ -80,6 +78,11 @@ class _MyAppState extends ConsumerState<MyApp> {
           // Here you might want to log out the user or take other action
         },
       );
+      
+      // Optional: Listen to state changes
+      SecureWebLock.stateStream.listen((state) {
+        setState(() => _isLocked = state.isLocked);
+      });
     });
   }
   
@@ -91,7 +94,10 @@ class _MyAppState extends ConsumerState<MyApp> {
       child: MaterialApp(
         navigatorKey: _navigatorKey,
         title: 'My App',
-        home: HomePage(),
+        navigatorObservers: [
+          SecureWebLock.createRouterObserver(), // Add observer for route tracking
+        ],
+        home: HomePage(isLocked: _isLocked),
       ),
     );
   }
@@ -132,28 +138,41 @@ ActivityObserver(
 
 ```dart
 // Lock the app manually
-SecureWebLock.lock(ref);
+SecureWebLock.lock();
 
 // Unlock the app
-SecureWebLock.unlock(ref);
+SecureWebLock.unlock();
 
 // Check if the app is currently locked
-bool isLocked = SecureWebLock.isLocked(ref);
+bool isLocked = SecureWebLock.isLocked;
 
 // Enable or disable the lock screen feature
-SecureWebLock.setEnabled(ref, true);
+SecureWebLock.setEnabled(true);
 
 // Toggle lock screen enabled state
-SecureWebLock.toggle(ref);
+SecureWebLock.toggle();
 
 // Set a new timeout duration
-SecureWebLock.setTimeout(ref, const Duration(minutes: 10));
+SecureWebLock.setTimeout(const Duration(minutes: 10));
 
 // Get current timeout
-Duration timeout = SecureWebLock.getTimeout(ref);
+Duration timeout = SecureWebLock.getTimeout();
 
 // Manual activity registration
-SecureWebLock.registerActivity(ref);
+SecureWebLock.registerActivity();
+```
+
+### State Changes
+
+You can listen to lock state changes using the provided stream:
+
+```dart
+SecureWebLock.stateStream.listen((state) {
+  bool isLocked = state.isLocked;
+  bool isEnabled = state.isEnabled;
+  
+  // Update your UI or take actions based on the new state
+});
 ```
 
 ## Custom Lock Screen
@@ -172,6 +191,28 @@ ActivityObserver(
   child: MaterialApp(...),
 )
 ```
+
+## Using with Different Routing Systems
+
+### 1. For Navigator 1.0:
+Use the provided setup with `navigatorKey`.
+
+### 2. For Navigator 2.0 / go_router:
+Add the navigator observer to your router:
+
+```dart
+final router = GoRouter(
+  observers: [
+    SecureWebLock.createRouterObserver(),
+  ],
+  routes: [
+    // ...your routes
+  ],
+);
+```
+
+### 3. For other routing solutions:
+Use the `isExcludedRouteCallback` for custom route tracking.
 
 ## License
 
